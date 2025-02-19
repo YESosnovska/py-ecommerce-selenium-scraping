@@ -94,11 +94,11 @@ def get_page_products(page_url: str) -> [Product]:
     page_soup = BeautifulSoup(text, "html.parser")
     driver = get_driver()
     driver.get(page_url)
-    while True:
-        if driver.find_element(By.CLASS_NAME, "btn.btn-lg"):
-            button = driver.find_element(By.CLASS_NAME, "btn.btn-lg")
+
+    if driver.find_element(By.CLASS_NAME, "btn.btn-lg"):
+        button = driver.find_element(By.CLASS_NAME, "btn.btn-lg")
+        while True:
             button.click()
-        break
 
     products = page_soup.select(".product-wrapper.card-body")
     return [parse_single_product(product) for product in products]
