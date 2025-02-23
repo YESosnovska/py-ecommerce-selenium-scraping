@@ -1,22 +1,22 @@
 import csv
 import dataclasses
+import time
 from dataclasses import dataclass
 from urllib.parse import urljoin
-
-import requests
-from bs4 import Tag, BeautifulSoup
 from selenium import webdriver
+from selenium.common import NoSuchElementException, ElementNotInteractableException, ElementClickInterceptedException
 from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.webelement import WebElement
 
 
 BASE_URL = "https://webscraper.io/"
 HOME_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/")
 COMPUTERS_URL = urljoin(HOME_URL, "computers/")
-LAPTOPS_URL = urljoin(COMPUTERS_URL, "laptops/")
-TABLETS_URL = urljoin(COMPUTERS_URL, "tablets/")
+LAPTOPS_URL = urljoin(COMPUTERS_URL, "laptops")
+TABLETS_URL = urljoin(COMPUTERS_URL, "tablets")
 PHONES_URL = urljoin(HOME_URL, "phones/")
-TOUCH_URL = urljoin(PHONES_URL, "touch/")
+TOUCH_URL = urljoin(PHONES_URL, "touch")
 
 _driver: WebDriver | None = None
 
@@ -37,75 +37,57 @@ class Product:
     price: float
     rating: int
     num_of_reviews: int
-    additional_info: dict | None = None
 
 
 PRODUCT_FIELDS = [field.name for field in dataclasses.fields(Product)]
 
 
-def parse_hdd_block_price(product_soup: Tag) -> dict[str, float]:
-    absolute_url = urljoin(BASE_URL, product_soup.select_one(".title")["href"])
-    driver = get_driver()
-    driver.get(absolute_url)
-    swatches = driver.find_element(By.CLASS_NAME, "swatches")
-    buttons = swatches.find_elements(By.TAG_NAME, "button")
+def parse_single_product(product: WebElement) -> Product:
+    title = product.find_element(
+        By.CSS_SELECTOR, ".title").get_attribute("title")
+    description = product.find_element(
+        By.CSS_SELECTOR, ".description").text
+    price = float(product.find_element(
+        By.CSS_SELECTOR, ".price").text.replace("$", ""))
+    rating = len(product.find_elements(
+        By.CSS_SELECTOR, ".ratings span.ws-icon-star"))
+    num_of_reviews = int(product.find_element(
+        By.CSS_SELECTOR, ".review-count").text.split()[0])
 
-    prices = {}
-    for button in buttons:
-        if not button.get_property("disabled"):
-            button.click()
-            prices[button.get_property("value")] = float(
-                driver.find_element(
-                    By.CLASS_NAME, "price"
-                ).text.replace(
-                    "$", "")
-            )
-
-    return prices
-
-
-def parse_single_product(product: Tag) -> Product:
-    parsed_product = Product(
-        title=product.select_one(".title")["title"],
-        description=product.select_one(".description").text,
-        price=float(product.select_one(".price").text.replace("$", "")),
-        rating=int(product.select_one("p[data-rating]")["data-rating"]),
-        num_of_reviews=int(
-            product.select_one(".review-count").text.split()[0]
-        ),
+    return Product(
+        title=title,
+        description=description,
+        price=price,
+        rating=rating,
+        num_of_reviews=num_of_reviews
     )
-
-    if product.select_one(".swatches"):
-        hdd_prices = parse_hdd_block_price(product)
-        parsed_product.additional_info = {"hdd_prices": hdd_prices}
-
-    return parsed_product
-
-
-def get_home_products() -> [Product]:
-    text = requests.get(HOME_URL).content
-    soup = BeautifulSoup(text, "html.parser")
-    products = soup.select(".product-wrapper.card-body")
-    return [parse_single_product(product) for product in products]
 
 
 def get_page_products(page_url: str) -> [Product]:
-    text = requests.get(page_url).content
-    page_soup = BeautifulSoup(text, "html.parser")
     driver = get_driver()
     driver.get(page_url)
 
-    if driver.find_element(By.CLASS_NAME, "btn.btn-lg"):
-        button = driver.find_element(By.CLASS_NAME, "btn.btn-lg")
-        while True:
-            button.click()
+    if cookies := driver.find_elements(By.CLASS_NAME,
+                                       "acceptCookies"):
+        cookies[0].click()
 
-    products = page_soup.select(".product-wrapper.card-body")
+    while True:
+        try:
+            driver.find_element(By.CLASS_NAME, "ecomerce-items-scroll-more").click()
+            time.sleep(0.2)
+        except (
+            NoSuchElementException,
+            ElementNotInteractableException,
+            ElementClickInterceptedException,
+        ):
+            break
+
+    products = driver.find_elements(By.CLASS_NAME, "card-body")
     return [parse_single_product(product) for product in products]
 
 
 def write_products_to_csv(products: [Product], file_name: str) -> None:
-    with open(file_name, "w") as f:
+    with open(file_name, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(PRODUCT_FIELDS)
         writer.writerows(
@@ -116,14 +98,14 @@ def write_products_to_csv(products: [Product], file_name: str) -> None:
 def get_all_products() -> None:
     with webdriver.Chrome() as driver:
         set_driver(driver)
-        write_products_to_csv(get_home_products(), "home.csv")
+        write_products_to_csv(get_page_products(HOME_URL), "home.csv")
         write_products_to_csv(get_page_products(
             COMPUTERS_URL), "computers.csv"
         )
         write_products_to_csv(get_page_products(LAPTOPS_URL), "laptops.csv")
         write_products_to_csv(get_page_products(TABLETS_URL), "tablets.csv")
         write_products_to_csv(get_page_products(PHONES_URL), "phones.csv")
-        write_products_to_csv(get_page_products(TOUCH_URL), "phones.csv")
+        write_products_to_csv(get_page_products(TOUCH_URL), "touch.csv")
 
 
 if __name__ == "__main__":
